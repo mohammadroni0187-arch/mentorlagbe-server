@@ -4,20 +4,25 @@ import cors from "cors";
 import "dotenv/config";
 import tuitionRoutes from "./routes/tuition.routes.js"
 import { connectDB } from "./config/db.js";
+import adminRoutes from "./routes/admin.routes.js"
+
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
-app.use(express.json());
-app.use("/api/tuitions", tuitionRoutes)
-
 app.use(
   cors({
     origin: "http://localhost:3000",
     credentials: true,
   })
 );
+
+
+app.use(express.json());
+app.use("/api/tuitions", tuitionRoutes)
+app.use("/api/admin", adminRoutes)
+
 
 // Health Check API
 app.get("/", (req, res) => {
