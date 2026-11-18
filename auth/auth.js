@@ -1,7 +1,7 @@
 
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
-import { jwt, role } from "better-auth/plugins";
+import { jwt } from "better-auth/plugins";
 
 export const createAuth = (db) => {
   return betterAuth({
@@ -10,32 +10,55 @@ export const createAuth = (db) => {
     secret: process.env.BETTER_AUTH_SECRET,
     baseURL: process.env.BETTER_AUTH_URL,
 
-    trustedOrigins: [
-      "http://localhost:3000",
-    ],
+    trustedOrigins: ["http://localhost:3000"],
 
     emailAndPassword: {
       enabled: true,
     },
-    user:{
-      additionalFields:{
-        role:{
-            type:"string",
-            required:false,
-            defaultValue:"student",
-            input:false,
-        }
-      }
+    socialProviders: {
+  google: {
+    clientId: process.env.GOOGLE_URI,
+    clientSecret: process.env.GOOGLE_SECRET,
+  },
+},
+
+    user: {
+      additionalFields: {
+        role: {
+          type: "string",
+          required: false,
+          defaultValue: "student",
+          input: true,
+        },
+      },
+    },
+
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (user) => {
+            const role =
+              user.role === "tutor" ? "tutor" : "student";
+
+            return {
+              data: {
+                ...user,
+                role,
+              },
+            };
+          },
+        },
+      },
     },
 
     plugins: [
       jwt({
-        jwt:{
-          definePayload:({user})=>({
-            id:user.id,
-            email:user.email,
-            name:user.name,
-            role:user.role,
+        jwt: {
+          definePayload: ({ user }) => ({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
           }),
         },
       }),

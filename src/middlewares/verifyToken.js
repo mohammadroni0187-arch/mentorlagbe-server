@@ -9,6 +9,7 @@ const JWKS = createRemoteJWKSet(
 export const verifyToken = async (req, res, next) => {
   try {
     const header = req.headers.authorization;
+    console.log("Authorization Header:", header);
 
     if (!header || !header.startsWith("Bearer ")) {
       return res.status(401).json({
