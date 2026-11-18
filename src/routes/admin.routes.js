@@ -1,6 +1,7 @@
 import express from "express";
 import { ObjectId } from "mongodb";
 import { getDB } from "../config/db.js";
+import { verifyAdmin, verifyToken } from "../middlewares/verifyToken.js";
 
 const router = express.Router();
 
@@ -123,5 +124,12 @@ router.patch("/tuitions/:id/reject", async (req, res) => {
       message: "Failed to reject tuition",
     });
   }
+});
+router.get("/test", verifyToken, verifyAdmin,(req,res)=>{
+  res.json({
+    success:true,
+    message:"Welcome Admin",
+    user:req.user,
+  });
 });
 export default router;
