@@ -1,6 +1,8 @@
 import express from "express";
 import { ObjectId } from "mongodb";
 import { getDB } from "../config/db.js";
+import { verifyToken, verifyTutor } from "../middlewares/verifyToken.js";
+
 
 const router = express.Router();
 
@@ -91,7 +93,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/tuitions - Create a new tuition
-router.post("/", async (req, res) => {
+router.post("/",verifyToken, verifyTutor, async (req, res) => {
   try {
     const {
       title,
@@ -117,19 +119,33 @@ router.post("/", async (req, res) => {
         message: "Please provide all required fields",
       });
     }
+    const salaryAmount = Number(salary);
+
+if (!Number.isFinite(salaryAmount) || salaryAmount <= 0) {
+  return res.status(400).json({
+    success: false,
+    message: "Salary must be a valid positive number",
+  });
+}
 
     const newTuition = {
-      title,
-      subject,
-      classLevel,
-      location,
-      mode,
-      salary: Number(salary),
-      description: description || "",
-      approvalStatus: "pending",
-      isActive: false,
-      createdAt: new Date(),
-    };
+  title,
+  subject,
+  classLevel,
+  location,
+  mode,
+  salary: salaryAmount,
+  description: description || "",
+
+  // Logged-in tutor information
+  tutorId: req.user.id,
+  tutorEmail: req.user.email,
+  tutorName: req.user.name,
+
+  approvalStatus: "pending",
+  isActive: false,
+  createdAt: new Date(),
+};
 
     const result = await getDB()
       .collection("tuitions")
