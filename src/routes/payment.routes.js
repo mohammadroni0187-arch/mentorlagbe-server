@@ -228,6 +228,12 @@ export const stripeWebhookHandler = async (req, res) => {
         session.payment_status === "paid" &&
         ObjectId.isValid(userId)
       ) {
+
+        const paymentUser = await db.collection("user").findOne(
+          { _id: new ObjectId(userId) },
+          { projection: { name: 1, email: 1, role: 1 } }
+        );
+              
         await db.collection("user").updateOne(
           { _id: new ObjectId(userId) },
           {
@@ -251,6 +257,10 @@ export const stripeWebhookHandler = async (req, res) => {
               amount: (session.amount_total || 0) / 100,
               currency: session.currency,
               paymentStatus: "paid",
+              userName: paymentUser?.name || "Unknown",
+                userEmail: paymentUser?.email || "N/A",
+                role: session.metadata?.audience || paymentUser?.role || "N/A",
+                planName: session.metadata?.planName || "Premium",
               createdAt: new Date(),
             },
           },
