@@ -344,27 +344,59 @@ router.patch("/:id", verifyToken, verifyTutor, async (req, res) => {
   }
 });
 
+
+
 // DELETE /api/tuitions/:id
 router.delete("/:id", verifyToken, verifyTutor, async (req, res) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ success: false, message: "Invalid tuition id" });
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid tuition id",
+      });
     }
 
-    const result = await tuitions().deleteOne({
-      _id: new ObjectId(req.params.id),
+    const db = getDB();
+    const tuitionId = new ObjectId(id);
+
+    const tuition = await db.collection("tuitions").findOne({
+      _id: tuitionId,
       tutorId: req.user.id,
     });
 
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ success: false, message: "Tuition not found" });
+    if (!tuition) {
+      return res.status(404).json({
+        success: false,
+        message: "Tuition not found",
+      });
     }
 
-    res.status(200).json({ success: true, message: "Tuition deleted" });
+   
+    await db.collection("applications").deleteMany({
+      tuitionId: { $in: [tuitionId, id] },
+    });
+
+    
+    await db.collection("tuitions").deleteOne({
+      _id: tuitionId,
+      tutorId: req.user.id,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Tuition and related applications deleted successfully",
+    });
   } catch (error) {
     console.error("Delete tuition error:", error);
-    res.status(500).json({ success: false, message: "Failed to delete tuition" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete tuition",
+    });
   }
 });
+
 
 export default router;

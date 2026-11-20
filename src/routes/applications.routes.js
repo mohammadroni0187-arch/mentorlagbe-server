@@ -310,16 +310,37 @@ router.patch("/:id/status", verifyToken, verifyTutor, async (req, res) => {
     if (!["accepted", "rejected"].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: "Status must be accepted or rejected",
+        message: "Invalid application status",
       });
     }
 
-    const result = await applications().updateOne(
-      {
-        _id: new ObjectId(id),
-        tutorId: req.user.id,
-        status: "pending",
-      },
+    const db = getDB();
+
+    const application = await db.collection("applications").findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        message: "Application does not exist",
+      });
+    }
+
+    console.log("Application tutorId:", application.tutorId);
+    console.log("Logged-in tutorId:", req.user.id);
+    console.log("Current status:", application.status);
+
+    if (String(application.tutorId) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to update this application",
+      });
+    }
+
+
+    await db.collection("applications").updateOne(
+      { _id: new ObjectId(id) },
       {
         $set: {
           status,
@@ -328,23 +349,16 @@ router.patch("/:id/status", verifyToken, verifyTutor, async (req, res) => {
       }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Pending application not found",
-      });
-    }
-
     return res.status(200).json({
       success: true,
       message: `Application ${status} successfully`,
     });
   } catch (error) {
-    console.error("Update application status error:", error);
+    console.error("Update application error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to update application status",
+      message: "Failed to update application",
     });
   }
 });
