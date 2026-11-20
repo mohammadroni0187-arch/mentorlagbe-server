@@ -22,7 +22,6 @@ router.post(
 
       const session = await stripe.checkout.sessions.create({
         mode: "subscription",
-        payment_method_types: ["card"],
         line_items: [
           {
             price: process.env.STRIPE_PRICE_ID,
@@ -40,13 +39,14 @@ router.post(
             plan: "premium",
           },
         },
-        success_url: `${process.env.FRONTEND_URL}/dashboard/tutor?payment=success`,
-        cancel_url: `${process.env.FRONTEND_URL}/dashboard/tutor?payment=cancelled`,
+        success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
       });
 
       res.status(200).json({
         success: true,
         url: session.url,
+        sessionId: session.id,
       });
     } catch (error) {
       console.error("Checkout error:", error);
@@ -131,14 +131,8 @@ router.post(
 
       const planName = `${audience}_${interval}_pro`;
 
-      const dashboard =
-        audience === "tutor"
-          ? "/dashboard/tutor"
-          : "/dashboard/student";
-
       const session = await stripe.checkout.sessions.create({
         mode: "subscription",
-        payment_method_types: ["card"],
         line_items: [
           {
             price: priceId,
@@ -163,13 +157,14 @@ router.post(
             planName,
           },
         },
-        success_url: `${process.env.FRONTEND_URL}${dashboard}?payment=success`,
-        cancel_url: `${process.env.FRONTEND_URL}/pricing?payment=cancelled`,
+        success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
       });
 
       return res.status(200).json({
         success: true,
         url: session.url,
+        sessionId: session.id,
       });
     } catch (error) {
       console.error("Plan Checkout Error:", error);
@@ -200,8 +195,145 @@ router.get("/history", verifyToken, async (req, res) => {
   }
 });
 
+/**
+ * Shared DB sync used by BOTH the Stripe webhook and the checkout-verification
+ * fallback (needed when STRIPE_WEBHOOK_SECRET is not configured yet).
+ * Keeps legacy field names so the existing admin/payment pages keep working.
+ */
+const activateProAndRecordPayment = async (db, session) => {
+  const userId = session.metadata?.userId || session.client_reference_id;
+
+  if (session.mode !== "subscription" || !ObjectId.isValid(userId)) {
+    return false;
+  }
+
+  const user = await db.collection("user").findOne(
+    { _id: new ObjectId(userId) },
+    { projection: { name: 1, email: 1, role: 1 } }
+  );
+
+  // Requirement: the subscription plan field is 'pro'.
+  await db.collection("user").updateOne(
+    { _id: new ObjectId(userId) },
+    {
+      $set: {
+        plan: "pro",
+        stripeCustomerId: session.customer,
+        stripeSubscriptionId: session.subscription,
+        updatedAt: new Date(),
+      },
+    }
+  );
+
+  const role = session.metadata?.audience || user?.role || "N/A";
+  const now = new Date();
+
+  await db.collection("payments").updateOne(
+    {
+      $or: [{ sessionId: session.id }, { stripeSessionId: session.id }],
+    },
+    {
+      $set: {
+        userId,
+        userEmail: user?.email || session.customer_email || "N/A",
+        userName: user?.name || "Unknown",
+        userRole: role,
+        planName: session.metadata?.planName || "Pro",
+        amount: (session.amount_total || 0) / 100,
+        currency: session.currency || "usd",
+        transactionId:
+          (typeof session.payment_intent === "string"
+            ? session.payment_intent
+            : session.payment_intent?.id) ||
+          session.subscription ||
+          session.id,
+        stripeSessionId: session.id,
+        paymentStatus: "paid",
+        paidAt: now,
+        // legacy aliases (unchanged consumers)
+        sessionId: session.id,
+        role,
+        customerId: session.customer,
+        subscriptionId: session.subscription,
+      },
+      $setOnInsert: { createdAt: now },
+    },
+    { upsert: true }
+  );
+
+  return true;
+};
+
+/**
+ * POST /api/payments/verify-checkout-session { sessionId }
+ * Called by /payment/success. Confirms the session with Stripe, checks that it
+ * belongs to the logged-in user, then syncs plan + payment record.
+ */
+router.post("/verify-checkout-session", verifyToken, async (req, res) => {
+  try {
+    const sessionId =
+      typeof req.body?.sessionId === "string"
+        ? req.body.sessionId.trim()
+        : typeof req.body?.session_id === "string"
+          ? req.body.session_id.trim()
+          : "";
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Checkout session ID is required",
+      });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const sessionUserId = session.metadata?.userId || session.client_reference_id;
+
+    if (!sessionUserId || String(sessionUserId) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "This payment does not belong to your account",
+      });
+    }
+
+    if (
+      session.mode !== "subscription" ||
+      !["paid", "no_payment_required"].includes(session.payment_status)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment has not been completed",
+      });
+    }
+
+    await activateProAndRecordPayment(getDB(), session);
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment verified. Your Pro plan is active.",
+      plan: "pro",
+    });
+  } catch (error) {
+    console.error("Checkout verification error:", error);
+    return res.status(400).json({
+      success: false,
+      message: "Could not verify this checkout session",
+    });
+  }
+});
+
 // Stripe Webhook Handler
 export const stripeWebhookHandler = async (req, res) => {
+  // When the webhook secret is not configured we acknowledge delivery and rely
+  // on the authenticated checkout-verification endpoint above instead.
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    console.warn(
+      "STRIPE_WEBHOOK_SECRET is not set - using checkout verification fallback."
+    );
+    return res
+      .status(200)
+      .json({ received: false, webhookConfigured: false });
+  }
+
   const signature = req.headers["stripe-signature"];
 
   let event;
@@ -220,53 +352,7 @@ export const stripeWebhookHandler = async (req, res) => {
     const db = getDB();
 
     if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const userId = session.metadata?.userId || session.client_reference_id;
-
-      if (
-        session.mode === "subscription" &&
-        session.payment_status === "paid" &&
-        ObjectId.isValid(userId)
-      ) {
-
-        const paymentUser = await db.collection("user").findOne(
-          { _id: new ObjectId(userId) },
-          { projection: { name: 1, email: 1, role: 1 } }
-        );
-              
-        await db.collection("user").updateOne(
-          { _id: new ObjectId(userId) },
-          {
-            $set: {
-              plan: "premium",
-              stripeCustomerId: session.customer,
-              stripeSubscriptionId: session.subscription,
-              updatedAt: new Date(),
-            },
-          }
-        );
-
-        await db.collection("payments").updateOne(
-          { sessionId: session.id },
-          {
-            $set: {
-              userId,
-              sessionId: session.id,
-              customerId: session.customer,
-              subscriptionId: session.subscription,
-              amount: (session.amount_total || 0) / 100,
-              currency: session.currency,
-              paymentStatus: "paid",
-              userName: paymentUser?.name || "Unknown",
-                userEmail: paymentUser?.email || "N/A",
-                role: session.metadata?.audience || paymentUser?.role || "N/A",
-                planName: session.metadata?.planName || "Premium",
-              createdAt: new Date(),
-            },
-          },
-          { upsert: true }
-        );
-      }
+      await activateProAndRecordPayment(db, event.data.object);
     }
 
     if (event.type === "customer.subscription.deleted") {

@@ -316,20 +316,25 @@ router.patch("/:id/status", verifyToken, verifyTutor, async (req, res) => {
 
     const db = getDB();
 
+    // Only an application that is still pending may be accepted or rejected.
+    // Already accepted/rejected applications must never be treated as pending.
     const application = await db.collection("applications").findOne({
       _id: new ObjectId(id),
+      status: "pending",
     });
 
     if (!application) {
-      return res.status(404).json({
+      const exists = await db.collection("applications").findOne({
+        _id: new ObjectId(id),
+      });
+
+      return res.status(exists ? 409 : 404).json({
         success: false,
-        message: "Application does not exist",
+        message: exists
+          ? "Only pending applications can be accepted or rejected"
+          : "Application does not exist",
       });
     }
-
-    console.log("Application tutorId:", application.tutorId);
-    console.log("Logged-in tutorId:", req.user.id);
-    console.log("Current status:", application.status);
 
     if (String(application.tutorId) !== String(req.user.id)) {
       return res.status(403).json({
@@ -338,9 +343,14 @@ router.patch("/:id/status", verifyToken, verifyTutor, async (req, res) => {
       });
     }
 
-
+    // Ownership + pending status are both part of the filter, so an
+    // unauthorized or concurrent request cannot modify the document.
     await db.collection("applications").updateOne(
-      { _id: new ObjectId(id) },
+      {
+        _id: new ObjectId(id),
+        tutorId: req.user.id,
+        status: "pending",
+      },
       {
         $set: {
           status,

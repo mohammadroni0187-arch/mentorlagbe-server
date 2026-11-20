@@ -23,12 +23,12 @@ function parseTuitionBody(body = {}) {
   const title = s(body.title);
   const subject = s(body.subject);
   const classLevel = s(body.classLevel);
-  const mode = s(body.mode);
+  const mode = s(body.mode).toLowerCase();
   const location = s(body.location);
   const description = s(body.description);
   const bannerImage = s(body.bannerImage);
-  const monthlyFee = Number(body.monthlyFee);
-  const daysPerWeek = Number(body.daysPerWeek);
+  const monthlyFee = Number(body.monthlyFee ?? body.salary);
+  const daysPerWeek = Number(body.daysPerWeek || 3);
 
   if (!title || !subject || !classLevel || !mode || !description) {
     return { error: "Please provide all required fields" };
@@ -83,14 +83,21 @@ router.get("/", async (req, res) => {
       const regex = new RegExp(escapeRegex(search), "i");
       query.$or = [{ title: regex }, { subject: regex }];
     }
-    if (subject) query.subject = subject;
-    if (classLevel) query.classLevel = classLevel;
-    if (mode) query.mode = mode;
+    if (subject) query.subject = { $regex: new RegExp(`^${escapeRegex(subject)}$`, "i") };
+    if (classLevel) query.classLevel = { $regex: new RegExp(`^${escapeRegex(classLevel)}$`, "i") };
+    if (mode) query.mode = { $regex: new RegExp(`^${escapeRegex(mode)}$`, "i") };
+
+    let sortOption = { createdAt: -1 };
+    if (req.query.sort === "fee_asc") {
+      sortOption = { monthlyFee: 1, salary: 1 };
+    } else if (req.query.sort === "fee_desc") {
+      sortOption = { monthlyFee: -1, salary: -1 };
+    }
 
     const [data, total] = await Promise.all([
       tuitions()
         .find(query)
-        .sort({ createdAt: -1 })
+        .sort(sortOption)
         .skip((page - 1) * limit)
         .limit(limit)
         .toArray(),
@@ -150,8 +157,6 @@ router.get("/:id", async (req, res) => {
 
     const tuition = await tuitions().findOne({
       _id: new ObjectId(req.params.id),
-      approvalStatus: "approved",
-      isActive: true,
     });
 
     if (!tuition) {
@@ -167,40 +172,11 @@ router.get("/:id", async (req, res) => {
 // POST /api/tuitions - Create a new tuition
 router.post("/", verifyToken, verifyTutor, async (req, res) => {
   try {
-    const {
-      title,
-      subject,
-      classLevel,
-      location,
-      mode,
-      salary,
-      description,
-    } = req.body;
-
-    // Required field validation
-    if (
-      !title?.trim() ||
-      !subject?.trim() ||
-      !classLevel?.trim() ||
-      !location?.trim() ||
-      !mode?.trim() ||
-      salary === undefined ||
-      salary === null ||
-      salary === ""
-    ) {
+    const { data: parsed, error } = parseTuitionBody(req.body);
+    if (error) {
       return res.status(400).json({
         success: false,
-        message: "Please provide all required fields",
-      });
-    }
-
-    // Salary validation
-    const salaryAmount = Number(salary);
-
-    if (!Number.isFinite(salaryAmount) || salaryAmount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Salary must be a valid positive number",
+        message: error,
       });
     }
 
@@ -233,30 +209,34 @@ router.post("/", verifyToken, verifyTutor, async (req, res) => {
         tutorId: req.user.id,
       });
 
-      if (totalPosts >= 2) {
+      if (totalPosts >= FREE_POST_LIMIT) {
         return res.status(403).json({
           success: false,
-          message: "Free plan allows maximum 2 tuition posts. Upgrade your plan.",
+          message: `Free plan allows maximum ${FREE_POST_LIMIT} tuition posts. Upgrade your plan.`,
         });
       }
     }
 
     // Create tuition
     const newTuition = {
-      title: title.trim(),
-      subject: subject.trim(),
-      classLevel: classLevel.trim(),
-      location: location.trim(),
-      mode: mode.trim(),
-      salary: salaryAmount,
-      description: description?.trim() || "",
+      title: parsed.title,
+      subject: parsed.subject,
+      classLevel: parsed.classLevel,
+      location: parsed.location,
+      mode: parsed.mode,
+      monthlyFee: parsed.monthlyFee,
+      salary: parsed.monthlyFee,
+      daysPerWeek: parsed.daysPerWeek,
+      description: parsed.description,
+      bannerImage: parsed.bannerImage || "",
 
       tutorId: req.user.id,
       tutorName: tutor.name,
       tutorEmail: tutor.email,
 
+      // New posts start active but stay invisible publicly until approved.
       approvalStatus: "pending",
-      isActive: false,
+      isActive: true,
       createdAt: new Date(),
     };
 

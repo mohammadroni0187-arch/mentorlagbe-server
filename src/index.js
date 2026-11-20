@@ -19,10 +19,23 @@ import paymentRoutes,{stripeWebhookHandler,} from './routes/payment.routes.js'
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware
+// Middleware - allow both configured client URLs so production and local dev
+// never hit CORS errors when they differ.
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.AUTH_BASE_URL,
+  "http://localhost:3000",
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.AUTH_BASE_URL || "http://localhost:3000",
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      // No ACAO header -> browser blocks the request cleanly, no server crash.
+      return callback(null, false);
+    },
     credentials: true,
   })
 );

@@ -26,7 +26,6 @@ export const verifyToken = async (req, res, next) => {
     });
 
     req.user = payload;
-    console.log("Verified JWT Payload:", payload);
     next();
 
   } catch (error) {
