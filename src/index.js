@@ -9,6 +9,12 @@ import tuitionRoutes from "./routes/tuition.routes.js";
 import { connectDB } from "./config/db.js";
 import adminRoutes from "./routes/admin.routes.js";
 import applicationRoutes from "./routes/applications.routes.js";
+import profileRoutes from './routes/profile.routes.js'
+import uploadRoutes from './routes/upload.routes.js'
+import paymentRoutes,{stripeWebhookHandler,} from './routes/payment.routes.js'
+
+
+
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -29,13 +35,22 @@ const startServer = async () => {
     // Better Auth
     app.all("/api/auth/*splat", toNodeHandler(auth));
 
+    app.post(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" }),
+  stripeWebhookHandler
+);
+
     // JSON Middleware
-    app.use(express.json());
+    app.use(express.json({ limit: "7mb" }));
 
     // API Routes
     app.use("/api/tuitions", tuitionRoutes);
     app.use("/api/admin", adminRoutes);
     app.use("/api/applications", applicationRoutes);
+    app.use("/api/profile", profileRoutes);
+    app.use("/api/profile/upload-image", uploadRoutes);
+    app.use("/api/payments", paymentRoutes);
 
     app.listen(port, () => {
       console.log(`Server running on port ${port}`);

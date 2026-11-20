@@ -84,7 +84,7 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
     const newApplication = {
       tuitionId: new ObjectId(tuitionId),
       tuitionTitle: tuition.title,
-      monthlyFee: tuition.monthlyFee,
+      monthlyFee: tuition.monthlyFee ?? tuition.salary ?? 0,
 
       studentId: req.user.id,
       studentName: req.user.name,

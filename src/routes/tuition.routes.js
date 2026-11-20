@@ -167,47 +167,116 @@ router.get("/:id", async (req, res) => {
 // POST /api/tuitions - Create a new tuition
 router.post("/", verifyToken, verifyTutor, async (req, res) => {
   try {
-    const { data, error } = parseTuitionBody(req.body);
-    if (error) return res.status(400).json({ success: false, message: error });
-    if (!data.bannerImage) {
-      return res.status(400).json({ success: false, message: "Banner image is required" });
+    const {
+      title,
+      subject,
+      classLevel,
+      location,
+      mode,
+      salary,
+      description,
+    } = req.body;
+
+    // Required field validation
+    if (
+      !title?.trim() ||
+      !subject?.trim() ||
+      !classLevel?.trim() ||
+      !location?.trim() ||
+      !mode?.trim() ||
+      salary === undefined ||
+      salary === null ||
+      salary === ""
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide all required fields",
+      });
     }
 
-    // Free plan: maximum 2ta post. Pro: unlimited.
-    if (req.user.plan !== "pro") {
-      const existing = await tuitions().countDocuments({ tutorId: req.user.id });
-      if (existing >= FREE_POST_LIMIT) {
+    // Salary validation
+    const salaryAmount = Number(salary);
+
+    if (!Number.isFinite(salaryAmount) || salaryAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Salary must be a valid positive number",
+      });
+    }
+
+    const db = getDB();
+
+    // Find logged-in tutor
+    if (!ObjectId.isValid(req.user.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid tutor ID",
+      });
+    }
+
+    const tutor = await db.collection("user").findOne({
+      _id: new ObjectId(req.user.id),
+    });
+
+    if (!tutor) {
+      return res.status(404).json({
+        success: false,
+        message: "Tutor account not found",
+      });
+    }
+
+    // Free plan: Maximum 2 tuition posts
+    const currentPlan = tutor.plan || "free";
+
+    if (currentPlan === "free") {
+      const totalPosts = await db.collection("tuitions").countDocuments({
+        tutorId: req.user.id,
+      });
+
+      if (totalPosts >= 2) {
         return res.status(403).json({
           success: false,
-          message: `Free plan allows up to ${FREE_POST_LIMIT} tuition posts. Upgrade to Pro for unlimited posts.`,
+          message: "Free plan allows maximum 2 tuition posts. Upgrade your plan.",
         });
       }
     }
 
+    // Create tuition
     const newTuition = {
-      ...data,
-      tutorId: req.user.id,
-      tutorEmail: req.user.email,
-      tutorName: req.user.name,
+      title: title.trim(),
+      subject: subject.trim(),
+      classLevel: classLevel.trim(),
+      location: location.trim(),
+      mode: mode.trim(),
+      salary: salaryAmount,
+      description: description?.trim() || "",
 
-      approvalStatus: "pending", // client-er value gnore kora hoy
-      rejectionReason: "",
-      // Public listing already approvalStatus: "approved" lage, tai approval-i gate.
-      // false rakhle admin approve korar por-o tutor-ke manually Active korte hobe.
-      isActive: true,
+      tutorId: req.user.id,
+      tutorName: tutor.name,
+      tutorEmail: tutor.email,
+
+      approvalStatus: "pending",
+      isActive: false,
       createdAt: new Date(),
     };
 
-    const result = await tuitions().insertOne(newTuition);
+    const result = await db.collection("tuitions").insertOne(newTuition);
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Tuition created successfully",
-      data: { _id: result.insertedId, ...newTuition },
+      data: {
+        _id: result.insertedId,
+        ...newTuition,
+      },
     });
   } catch (error) {
     console.error("Create tuition error:", error);
-    res.status(500).json({ success: false, message: "Failed to create tuition" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create tuition",
+    });
   }
 });
 
