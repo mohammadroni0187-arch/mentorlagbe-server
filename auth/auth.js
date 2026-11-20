@@ -30,6 +30,24 @@ export const createAuth = (db) => {
           defaultValue: "student",
           input: true,
         },
+        phone: {
+          type: "string",
+          required: false,
+          defaultValue: "",
+          input: true,
+        },
+        bio: {
+          type: "string",
+          required: false,
+          defaultValue: "",
+          input: true,
+        },
+        plan: {
+          type: "string",
+          required: false,
+          defaultValue: "free",
+          input: false,
+        },
       },
     },
 
@@ -37,13 +55,17 @@ export const createAuth = (db) => {
       user: {
         create: {
           before: async (user) => {
-            const role =
-              user.role === "tutor" ? "tutor" : "student";
+            // Strict role restriction: new signups can only be 'tutor' or 'student'
+            const role = user.role === "tutor" ? "tutor" : "student";
+            const plan = "free";
 
             return {
               data: {
                 ...user,
                 role,
+                plan,
+                phone: typeof user.phone === "string" ? user.phone : "",
+                bio: typeof user.bio === "string" ? user.bio : "",
               },
             };
           },
@@ -58,7 +80,8 @@ export const createAuth = (db) => {
             id: user.id,
             email: user.email,
             name: user.name,
-            role: user.role,
+            role: user.role || "student",
+            plan: user.plan || "free",
           }),
         },
       }),
