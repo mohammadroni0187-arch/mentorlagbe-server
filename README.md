@@ -8,8 +8,9 @@ This API powers the MentorLagbe client. It provides BetterAuth authentication wi
 
 - **Client GitHub repository:** https://github.com/mohammadroni0187-arch/mentorlagbe-client.git
 - **Server GitHub repository:** https://github.com/mohammadroni0187-arch/mentorlagbe-server.git
-- **Configured application URL:** `http://localhost:3000` (from `FRONTEND_URL` / `AUTH_BASE_URL`). Configure these for the deployed client, not localhost, in production.
-- **API default URL:** `http://localhost:5000`.
+- **Live API:** https://mentorlagbe-server-jffj.vercel.app
+- **Live client:** https://mentorlagbe-client-one.vercel.app
+- **Local API URL:** `http://localhost:5000` (client at `http://localhost:3000`).
 
 ## Technology Stack
 
@@ -128,7 +129,7 @@ npm install --omit=dev
 npm start
 ```
 
-Set all environment variables in the hosting dashboard. For production, set `BETTER_AUTH_URL`, `AUTH_BASE_URL` and `FRONTEND_URL` to the deployed API/client URLs, register the deployed Stripe webhook endpoint and set `STRIPE_WEBHOOK_SECRET`. Ensure MongoDB Atlas network access allows the deployment host.
+Set all environment variables in the hosting dashboard. For production, set `BETTER_AUTH_URL` and `AUTH_BASE_URL` to `https://mentorlagbe-server-jffj.vercel.app` and `FRONTEND_URL` to `https://mentorlagbe-client-one.vercel.app`, register the deployed Stripe webhook endpoint and set `STRIPE_WEBHOOK_SECRET`. Ensure MongoDB Atlas network access allows the deployment host.
 
 ## Testing Accounts
 
