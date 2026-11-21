@@ -4,29 +4,11 @@ import { getDB } from "../config/db.js";
 import { ObjectId } from "mongodb";
 import {
   verifyToken,
-  verifyTutor,
   verifyAdmin,
 } from "../middlewares/verifyToken.js";
 
 const router = express.Router();
 
-// Tutor test
-router.get("/tutor-test", verifyToken, verifyTutor, (req, res) => {
-  res.json({
-    success: true,
-    message: "Tutor access granted",
-    user: req.user,
-  });
-});
-
-// Admin test
-router.get("/test", verifyToken, verifyAdmin, (req, res) => {
-  res.json({
-    success: true,
-    message: "Admin access granted",
-    user: req.user,
-  });
-});
 // Admin Dashboard Statistics
 router.get("/stats", verifyToken, verifyAdmin, async (req, res) => {
   try {

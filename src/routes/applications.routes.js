@@ -12,7 +12,7 @@ const router = express.Router();
 
 const applications = () => getDB().collection("applications");
 const tuitions = () => getDB().collection("tuitions");
-const applicationSlots = () => getDB().collection("applicationSlots");
+const applicationUsage = () => getDB().collection("applicationUsage");
 
 // Free-plan students may submit at most 2 applications. This mirrors the
 // existing tutor free-post policy: a lifetime count with no reset period and
@@ -57,34 +57,71 @@ const findStudent = async (studentId) => {
   );
 };
 
-// Atomic slot reservation. insertOne on a fixed _id fails with code 11000 when
-// the slot is already taken, so two concurrent requests can never both claim
-// the last free slot.
-const claimFreeSlot = async (studentId, applicationId) => {
-  for (let slot = 0; slot < FREE_APPLICATION_LIMIT; slot += 1) {
-    try {
-      await applicationSlots().insertOne({
-        _id: `${studentId}:${slot}`,
+/**
+ * Persistent lifetime usage counter. It is never reduced on cancellation or
+ * rejection, so cancelling or a tutor rejecting an application cannot restore
+ * a free student's quota. Existing students are migrated from their current
+ * application documents the first time they apply after this version is live.
+ */
+const ensureUsageDocument = async (studentId) => {
+  const existing = await applicationUsage().findOne(
+    { _id: studentId },
+    { projection: { count: 1 } }
+  );
+  if (existing) return existing;
+
+  const legacyCount = await applications().countDocuments({ studentId });
+
+  await applicationUsage().updateOne(
+    { _id: studentId },
+    {
+      $setOnInsert: {
         studentId,
-        slot,
-        applicationId,
+        count: legacyCount,
         createdAt: new Date(),
-      });
-      return true;
-    } catch (error) {
-      if (error?.code === 11000) continue;
-      throw error;
-    }
-  }
-  return false;
+        updatedAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+
+  return applicationUsage().findOne(
+    { _id: studentId },
+    { projection: { count: 1 } }
+  );
 };
 
-const releaseApplicationSlots = async (studentId, applicationIds) => {
-  if (!applicationIds.length) return;
-  await applicationSlots().deleteMany({
-    studentId,
-    applicationId: { $in: applicationIds },
-  });
+/**
+ * Atomically reserve one lifetime application. For free students the filtered
+ * update fails once the cap is reached, which also makes concurrent requests
+ * safe. Pro students get an unconditional increment.
+ */
+const reserveApplicationUsage = async (studentId, isPro) => {
+  await ensureUsageDocument(studentId);
+
+  if (isPro) {
+    await applicationUsage().updateOne(
+      { _id: studentId },
+      { $inc: { count: 1 }, $set: { updatedAt: new Date() } }
+    );
+    return true;
+  }
+
+  const result = await applicationUsage().findOneAndUpdate(
+    { _id: studentId, count: { $lt: FREE_APPLICATION_LIMIT } },
+    { $inc: { count: 1 }, $set: { updatedAt: new Date() } },
+    { returnDocument: "after" }
+  );
+
+  return !!result;
+};
+
+// Only used when an application was NOT saved (e.g. duplicate request).
+const releaseApplicationUsage = async (studentId) => {
+  await applicationUsage().updateOne(
+    { _id: studentId, count: { $gt: 0 } },
+    { $inc: { count: -1 }, $set: { updatedAt: new Date() } }
+  );
 };
 
 const s = (value) =>
@@ -166,28 +203,16 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
     }
 
     const currentPlan = student.plan || "free";
+    const isPro = isProPlan(currentPlan);
     const applicationId = new ObjectId();
-    let slotClaimed = false;
 
-    if (!isProPlan(currentPlan)) {
-      // Lifetime count, matching the existing tutor free-post policy. This
-      // also covers applications created before slot tracking existed.
-      const totalApplied = await applications().countDocuments({
-        studentId: req.user.id,
+    // Reserve the lifetime usage atomically before writing the application.
+    if (!(await reserveApplicationUsage(req.user.id, isPro))) {
+      return res.status(403).json({
+        success: false,
+        code: "FREE_APPLICATION_LIMIT",
+        message: FREE_LIMIT_MESSAGE,
       });
-
-      if (
-        totalApplied >= FREE_APPLICATION_LIMIT ||
-        !(await claimFreeSlot(req.user.id, applicationId))
-      ) {
-        return res.status(403).json({
-          success: false,
-          code: "FREE_APPLICATION_LIMIT",
-          message: FREE_LIMIT_MESSAGE,
-        });
-      }
-
-      slotClaimed = true;
     }
 
     const newApplication = {
@@ -215,10 +240,9 @@ router.post("/", verifyToken, verifyStudent, async (req, res) => {
     try {
       await applications().insertOne(newApplication);
     } catch (error) {
-      // Never leave a claimed slot behind when the application was not saved.
-      if (slotClaimed) {
-        await releaseApplicationSlots(req.user.id, [applicationId]);
-      }
+      // The application was not saved, so this request is not part of the
+      // lifetime usage. Failed/rejected API requests must not count.
+      await releaseApplicationUsage(req.user.id);
 
       if (error?.code === 11000) {
         return res.status(409).json({
@@ -255,8 +279,12 @@ router.get(
       const studentId = req.user.id;
       const student = await findStudent(studentId);
       const currentPlan = student?.plan || "free";
+      const isPro = isProPlan(currentPlan);
 
-      const [totalApplied, accepted, pending] = await Promise.all([
+      const usage = await ensureUsageDocument(studentId);
+      const totalApplied = usage?.count || 0;
+
+      const [activeApplications, accepted, pending] = await Promise.all([
         applications().countDocuments({ studentId }),
 
         applications().countDocuments({
@@ -273,18 +301,19 @@ router.get(
       return res.status(200).json({
         success: true,
         data: {
+          // Lifetime successful submissions (never reset by cancel/reject).
           totalApplied,
+          activeApplications,
           accepted,
           pending,
           currentPlan,
           freeApplicationLimit: FREE_APPLICATION_LIMIT,
           freeApplicationsUsed: Math.min(totalApplied, FREE_APPLICATION_LIMIT),
           // Pro has no application limit, so null means unlimited here.
-          remainingFreeApplications: isProPlan(currentPlan)
+          remainingFreeApplications: isPro
             ? null
             : Math.max(0, FREE_APPLICATION_LIMIT - totalApplied),
-          canApply:
-            isProPlan(currentPlan) || totalApplied < FREE_APPLICATION_LIMIT,
+          canApply: isPro || totalApplied < FREE_APPLICATION_LIMIT,
         },
       });
     } catch (error) {
@@ -348,9 +377,8 @@ router.delete("/:id", verifyToken, verifyStudent, async (req, res) => {
       });
     }
 
-    // A cancelled application must give its free-plan slot back.
-    await releaseApplicationSlots(req.user.id, [new ObjectId(id)]);
-
+    // Lifetime usage is intentionally NOT reduced: cancelling a pending
+    // application does not restore a free student's application quota.
     return res.status(200).json({
       success: true,
       message: "Application cancelled successfully",
