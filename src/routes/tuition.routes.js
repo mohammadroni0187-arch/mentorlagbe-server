@@ -353,7 +353,20 @@ router.delete("/:id", verifyToken, verifyTutor, async (req, res) => {
       });
     }
 
-   
+    // Release the free-plan slots held by applications that are about to be
+    // removed, otherwise the students would lose quota for a deleted tuition.
+    const removedApplications = await db
+      .collection("applications")
+      .find({ tuitionId: { $in: [tuitionId, id] } }, { projection: { studentId: 1 } })
+      .toArray();
+
+    for (const application of removedApplications) {
+      await db.collection("applicationSlots").deleteMany({
+        studentId: application.studentId,
+        applicationId: application._id,
+      });
+    }
+
     await db.collection("applications").deleteMany({
       tuitionId: { $in: [tuitionId, id] },
     });
