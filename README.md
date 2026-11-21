@@ -38,6 +38,24 @@ This API powers the MentorLagbe client. It provides BetterAuth authentication wi
 | `/api/payments` | Checkout session creation, verification, history, subscription |
 | `/api/payments/webhook` | Stripe webhook (when `STRIPE_WEBHOOK_SECRET` is configured) |
 
+## User Roles and Capabilities
+
+### Student
+- Browse, search and filter approved and active tuitions, view details, and apply once per tuition.
+- Free plan: at most **2 applications in total (lifetime)**. Cancelling an application or a tutor rejecting one does **not** restore the quota. Pro plan: unlimited applications.
+- View own application list and statistics (`GET /api/applications/student`, `GET /api/applications/student/stats`); cancel only own pending applications.
+- Update profile/photo and upgrade to Student Pro through Stripe Checkout.
+
+### Tutor
+- Post tuitions (Free plan: up to 2 posts, Pro: unlimited), edit/delete own posts, toggle active/closed, and upload banners through ImgBB.
+- Review applications on own tuitions; accept/reject only pending applications.
+- View tutor statistics and applicant lists; update profile; upgrade to Tutor Pro and manage the subscription.
+
+### Admin
+- View platform statistics and the Stripe transaction overview.
+- Change user roles (never your own) and approve/reject pending tuition posts.
+- Admin does not create, cancel, accept or reject student applications.
+
 ## MongoDB Collections
 
 | Collection | Created / updated by | Key fields |
@@ -76,14 +94,12 @@ Only approved and active tuitions are returned by the public list. Deleting a tu
 
 ## Environment Variables (names only — no secret values)
 
-Create `.env` in this repository:
+This repository does **not** ship an `.env.example`. Create `.env` manually in the project root with the variable names below and fill in your own local values (never commit the file):
 
 ```bash
-MONGO_URI=
+MONGODB_URI=
 DB_NAME=
 PORT=
-JWT_SECRET=
-JWT_EXPIRES_IN=
 AUTH_BASE_URL=
 FRONTEND_URL=
 BETTER_AUTH_SECRET=
@@ -98,7 +114,16 @@ STRIPE_TUTOR_MONTHLY_PRICE_ID=
 STRIPE_TUTOR_YEARLY_PRICE_ID=
 STRIPE_STUDENT_MONTHLY_PRICE_ID=
 STRIPE_STUDENT_YEARLY_PRICE_ID=
+NODE_ENV=
 ```
+
+- `MONGODB_URI` — MongoDB Atlas connection string (the name used by `src/config/db.js`).
+- `DB_NAME` — database name (defaults to `mentorlagbe`).
+- `PORT` — local API port (defaults to `5000`).
+- `AUTH_BASE_URL` / `FRONTEND_URL` — allowed browser origins for CORS and BetterAuth.
+- `BETTER_AUTH_URL` — public server URL; also the JWT issuer/audience.
+- `NODE_ENV` — normally set by the host; `production` enables Secure / `SameSite=None` auth cookies.
+- Legacy notes about `JWT_SECRET` / `JWT_EXPIRES_IN` are obsolete: current tokens are verified through the BetterAuth JWKS endpoint using `BETTER_AUTH_URL`.
 
 `STRIPE_WEBHOOK_SECRET` is optional for local development: when it is empty, the webhook acknowledges delivery without syncing and the authenticated checkout-verification endpoint handles the sync instead. Configure it in production for reliable payment events.
 
@@ -108,7 +133,7 @@ STRIPE_STUDENT_YEARLY_PRICE_ID=
 git clone https://github.com/mohammadroni0187-arch/mentorlagbe-server.git
 cd mentorlagbe-server
 npm install
-cp .env.example .env  # or create .env with the names above
+# Create .env manually with the variables listed in the Environment Variables section
 npm run dev
 ```
 
@@ -140,6 +165,13 @@ Accounts present in the database include (passwords are hashed and are **not** s
 - Student: `mohammadroni0187@gmail.com`
 
 No passwords are invented or published here.
+
+### Admin demo login (safe)
+
+- No demo password is published. Use an existing admin account (email above) with a password reset locally by the project owner, or sign up your own account and have an existing admin grant the role with `PATCH /api/admin/users/:id/role`.
+- Sign in through the client at `/signIn` using that admin email and local password. The JWT issued by BetterAuth carries `role: admin`, which `verifyAdmin` checks on `/api/admin/*`.
+- For a quick API smoke check, call `GET /api/admin/stats` with `Authorization: Bearer <token>` from `POST /api/auth/token`.
+- Never commit passwords, tokens, or `.env` files.
 
 ## Important npm Packages
 
