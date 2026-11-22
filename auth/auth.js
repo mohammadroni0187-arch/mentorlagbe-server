@@ -1,7 +1,7 @@
 
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
-import { jwt } from "better-auth/plugins";
+import { jwt, oAuthProxy } from "better-auth/plugins";
 import { allowedOrigins } from "../src/config/origins.js";
 
 // Local dev (http://localhost) must keep using plain, non-secure cookies.
@@ -104,6 +104,12 @@ export const createAuth = (db) => {
             plan: user.plan || "free",
           }),
         },
+      }),
+      // Google's callback stays on this API host (redirect_uri is unchanged),
+      // but the encrypted OAuth result is replayed through the frontend's
+      // /api/auth proxy so the session cookie is set on the frontend domain.
+      oAuthProxy({
+        currentURL: process.env.FRONTEND_URL,
       }),
     ],
   });
